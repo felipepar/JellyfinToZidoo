@@ -175,7 +175,8 @@ public class Play extends AppCompatActivity
                 sendZidooKey("Key.MediaPause");
                 break;
             case "Unpause":
-                sendZidooKey("Key.MediaPlay");
+            case "Resume":
+                sendZidooKey("Key.MediaPlay.Pause");
                 break;
             case "Stop":
                 sendZidooKey("Key.MediaStop");
@@ -1301,8 +1302,8 @@ public class Play extends AppCompatActivity
                                 lastKnownDurationMs = video.get("duration").getAsLong();
                             }
 
-                            // Read pause state from Zidoo: status 0 = playing, 1 = paused
-                            boolean isZidooPaused = video.has("status") && video.get("status").getAsInt() == 1;
+                            // Read pause state from Zidoo: status 1 = playing, 0 = paused
+                            boolean isZidooPaused = video.has("status") && video.get("status").getAsInt() == 0;
 
                             if (video.has("currentPosition")) {
                                 long currentPositionMs = video.get("currentPosition").getAsLong();
