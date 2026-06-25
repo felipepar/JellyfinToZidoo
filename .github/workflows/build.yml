@@ -45,6 +45,7 @@ jobs:
       run: |
         java -jar uber-apk-signer.jar \
           --apks app/build/outputs/apk/debug/app-debug.apk \
+          --allowResign \
           --out app/build/outputs/apk/signed/
 
     - name: Upload signed APK
