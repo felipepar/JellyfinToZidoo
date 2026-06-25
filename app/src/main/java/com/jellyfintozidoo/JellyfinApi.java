@@ -840,39 +840,24 @@ public class JellyfinApi {
         enqueueSimpleRequest(request, "reportPlaybackStart", callback);
     }
 
-    /**
+/**
      * Reports session capabilities to Jellyfin server, enabling remote media control.
-     * POST /Sessions/Capabilities/Full
-     * Must be called after session is established so Jellyfin marks this session
-     * as controllable (SupportsMediaControl=true) and sends WebSocket commands.
+     * POST /Sessions/Capabilities with query parameters (not JSON body).
      */
     public static void reportCapabilities(String serverUrl, String apiKey, SimpleCallback callback) {
         String baseUrl = serverUrl.endsWith("/") ? serverUrl.substring(0, serverUrl.length() - 1) : serverUrl;
-        String url = baseUrl + "/Sessions/Capabilities/Full";
-
-        JsonObject body = new JsonObject();
-        body.addProperty("SupportsMediaControl", true);
-        body.addProperty("SupportsPersistentIdentifier", true);
-        body.addProperty("SupportsContentUploading", false);
-        body.addProperty("SupportsPersistentIdentifier", true);
-
-        JsonArray commands = new JsonArray();
-        commands.add("PlayPause");
-        commands.add("Pause");
-        commands.add("Unpause");
-        commands.add("Stop");
-        commands.add("Seek");
-        body.add("SupportedCommands", commands);
-
-        JsonArray mediaTypes = new JsonArray();
-        mediaTypes.add("Video");
-        body.add("PlayableMediaTypes", mediaTypes);
+        String url = baseUrl + "/Sessions/Capabilities"
+                + "?playableMediaTypes=Video"
+                + "&supportedCommands=PlayState"
+                + "&supportedCommands=Seek"
+                + "&supportedCommands=Play"
+                + "&supportsMediaControl=true"
+                + "&supportsPersistentIdentifier=true";
 
         Request request = new Request.Builder()
                 .url(url)
                 .addHeader("Authorization", buildFullAuthHeader(apiKey))
-                .addHeader("Content-Type", "application/json")
-                .post(RequestBody.create(body.toString(), JSON_MEDIA_TYPE))
+                .post(RequestBody.create("", JSON_MEDIA_TYPE))
                 .build();
 
         enqueueSimpleRequest(request, "reportCapabilities", callback);
