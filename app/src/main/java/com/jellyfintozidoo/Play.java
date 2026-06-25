@@ -113,7 +113,12 @@ public class Play extends AppCompatActivity
                 try {
                     com.google.gson.JsonObject msg = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
                     String msgType = msg.has("MessageType") ? msg.get("MessageType").getAsString() : "";
-
+                    // Respond to KeepAlive so Jellyfin doesn't drop the connection
+                    if ("ForceKeepAlive".equals(msgType) || "KeepAlive".equals(msgType)) {
+                        webSocket.send("{\"MessageType\":\"KeepAlive\"}");
+                        Log.d("Play", "Sent KeepAlive response");
+                        return;
+                    }
                     if ("Play".equals(msgType) || "GeneralCommand".equals(msgType)) {
                         com.google.gson.JsonObject data = msg.has("Data") ? msg.getAsJsonObject("Data") : null;
                         if (data == null) return;
