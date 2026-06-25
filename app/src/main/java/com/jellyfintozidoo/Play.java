@@ -1550,7 +1550,6 @@ public class Play extends AppCompatActivity
             progressPoller.shutdownNow();
             progressPoller = null;
         }
-        closeJellyfinWebSocket();
     }
 
     /**
@@ -1572,6 +1571,7 @@ public class Play extends AppCompatActivity
     {
         super.onDestroy();
         stopProgressPoller();
+        closeJellyfinWebSocket();
     }
 
     @Override
