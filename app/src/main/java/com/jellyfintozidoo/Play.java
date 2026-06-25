@@ -119,17 +119,19 @@ public class Play extends AppCompatActivity
                         Log.d("Play", "Sent KeepAlive response");
                         return;
                     }
-                    if ("Play".equals(msgType) || "GeneralCommand".equals(msgType)) {
-                        com.google.gson.JsonObject data = msg.has("Data") ? msg.getAsJsonObject("Data") : null;
-                        if (data == null) return;
-
-                        // GeneralCommand: {"Name": "PlayPause"} or {"Name": "Pause"} etc.
-                        if ("GeneralCommand".equals(msgType) && data.has("Name")) {
-                            String name = data.get("Name").getAsString();
-                            handleJellyfinCommand(name, data);
+                    com.google.gson.JsonObject data = msg.has("Data") ? msg.getAsJsonObject("Data") : null;
+                    if ("Playstate".equals(msgType)) {
+                        // Pause/Unpause/Stop/Seek sent via POST /Sessions/{id}/Playing/{command}
+                        if (data != null && data.has("Command")) {
+                            handleJellyfinCommand(data.get("Command").getAsString(), data);
                         }
-                        // Play command: {"PlayCommand": "PlayPause"} etc.
-                        else if ("Play".equals(msgType) && data.has("PlayCommand")) {
+                    } else if ("GeneralCommand".equals(msgType)) {
+                        // PlayPause/Pause/Unpause sent as general commands
+                        if (data != null && data.has("Name")) {
+                            handleJellyfinCommand(data.get("Name").getAsString(), data);
+                        }
+                    } else if ("Play".equals(msgType)) {
+                        if (data != null && data.has("PlayCommand")) {
                             handleJellyfinCommand(data.get("PlayCommand").getAsString(), data);
                         }
                     }
