@@ -65,6 +65,137 @@ public class Play extends AppCompatActivity
     }
 
     /**
+     * Sends a remote control key command to Zidoo player via REST API. Fire-and-forget.
+     * Key codes: Key.MediaPlay, Key.MediaPause, Key.MediaStop, etc.
+     */
+    private void sendZidooKey(String key) {
+        new Thread(() -> {
+            try {
+                okhttp3.Request request = new okhttp3.Request.Builder()
+                        .url("http://127.0.0.1:9529/ZidooControlCenter/RemoteControl/sendkey?key=" + key)
+                        .build();
+                getLocalClient().newCall(request).execute().close();
+            } catch (Exception e) {
+                Log.w("Play", "sendZidooKey failed: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /**
+     * Opens a WebSocket connection to Jellyfin server to receive remote control commands.
+     * Handles PlayPause, Pause, Unpause, Stop, Seek commands by forwarding to Zidoo player.
+     * Reconnects automatically if the connection drops while playback is active.
+     */
+    private void openJellyfinWebSocket() {
+        if (serverUrl.isEmpty() || accessToken.isEmpty()) return;
+        if (jellyfinWebSocket != null) return; // Already open
+
+        String baseUrl = serverUrl.endsWith("/") ? serverUrl.substring(0, serverUrl.length() - 1) : serverUrl;
+        String wsUrl = baseUrl.replace("http://", "ws://").replace("https://", "wss://")
+                + "/socket?api_key=" + accessToken + "&deviceId=jellyfintozidoo";
+
+        okhttp3.Request wsRequest = new okhttp3.Request.Builder().url(wsUrl).build();
+
+        // Use a separate client with longer timeouts for WebSocket
+        okhttp3.OkHttpClient wsClient = new okhttp3.OkHttpClient.Builder()
+                .readTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS) // No timeout for WebSocket
+                .build();
+
+        jellyfinWebSocket = wsClient.newWebSocket(wsRequest, new okhttp3.WebSocketListener() {
+            @Override
+            public void onOpen(okhttp3.WebSocket webSocket, okhttp3.Response response) {
+                Log.d("Play", "Jellyfin WebSocket connected");
+            }
+
+            @Override
+            public void onMessage(okhttp3.WebSocket webSocket, String text) {
+                Log.d("Play", "Jellyfin WebSocket message: " + text);
+                try {
+                    com.google.gson.JsonObject msg = com.google.gson.JsonParser.parseString(text).getAsJsonObject();
+                    String msgType = msg.has("MessageType") ? msg.get("MessageType").getAsString() : "";
+
+                    if ("Play".equals(msgType) || "GeneralCommand".equals(msgType)) {
+                        com.google.gson.JsonObject data = msg.has("Data") ? msg.getAsJsonObject("Data") : null;
+                        if (data == null) return;
+
+                        // GeneralCommand: {"Name": "PlayPause"} or {"Name": "Pause"} etc.
+                        if ("GeneralCommand".equals(msgType) && data.has("Name")) {
+                            String name = data.get("Name").getAsString();
+                            handleJellyfinCommand(name, data);
+                        }
+                        // Play command: {"PlayCommand": "PlayPause"} etc.
+                        else if ("Play".equals(msgType) && data.has("PlayCommand")) {
+                            handleJellyfinCommand(data.get("PlayCommand").getAsString(), data);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.w("Play", "WebSocket message parse error: " + e.getMessage());
+                }
+            }
+
+            @Override
+            public void onFailure(okhttp3.WebSocket webSocket, Throwable t, okhttp3.Response response) {
+                Log.w("Play", "Jellyfin WebSocket failure: " + t.getMessage());
+                jellyfinWebSocket = null;
+                // Reconnect after 5s if still playing
+                if (progressPoller != null && !progressPoller.isShutdown()) {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                        if (progressPoller != null && !progressPoller.isShutdown()) {
+                            openJellyfinWebSocket();
+                        }
+                    }, 5000);
+                }
+            }
+
+            @Override
+            public void onClosed(okhttp3.WebSocket webSocket, int code, String reason) {
+                Log.d("Play", "Jellyfin WebSocket closed: " + reason);
+                jellyfinWebSocket = null;
+            }
+        });
+    }
+
+    /**
+     * Handles a Jellyfin remote control command by forwarding to Zidoo player.
+     */
+    private void handleJellyfinCommand(String command, com.google.gson.JsonObject data) {
+        Log.d("Play", "Handling Jellyfin command: " + command);
+        switch (command) {
+            case "PlayPause":
+                sendZidooKey("Key.MediaPlay.Pause");
+                break;
+            case "Pause":
+                sendZidooKey("Key.MediaPause");
+                break;
+            case "Unpause":
+                sendZidooKey("Key.MediaPlay");
+                break;
+            case "Stop":
+                sendZidooKey("Key.MediaStop");
+                break;
+            case "Seek":
+                if (data.has("SeekPositionTicks")) {
+                    long ticks = data.get("SeekPositionTicks").getAsLong();
+                    long posMs = JellyfinApi.ticksToMs(ticks);
+                    seekZidoo(posMs);
+                }
+                break;
+            default:
+                Log.d("Play", "Unhandled Jellyfin command: " + command);
+        }
+    }
+
+    /**
+     * Closes the Jellyfin WebSocket connection.
+     */
+    private void closeJellyfinWebSocket() {
+        if (jellyfinWebSocket != null) {
+            jellyfinWebSocket.close(1000, "Playback stopped");
+            jellyfinWebSocket = null;
+        }
+    }
+
+    /**
      * Seeks Zidoo player to a position via REST API. Fire-and-forget.
      * Note: "positon" is a real typo in the Zidoo API.
      */
@@ -167,6 +298,7 @@ public class Play extends AppCompatActivity
     private volatile boolean handlingPlaybackResult = false;
     private volatile boolean awaitingPlaybackResult = false;
     private java.util.concurrent.ScheduledExecutorService progressPoller = null;
+    private okhttp3.WebSocket jellyfinWebSocket = null;
     // PLEX_REMOVED_START - Plex API: media version index
     // private int mediaIndex = -1;
     // PLEX_REMOVED_END
@@ -647,6 +779,17 @@ public class Play extends AppCompatActivity
                                 startProgressPoller(); // Start poller anyway
                             }
                         });
+                    // Register session capabilities so Jellyfin marks us as controllable
+                    JellyfinApi.reportCapabilities(serverUrl, accessToken, new JellyfinApi.SimpleCallback() {
+                        @Override public void onSuccess(String msg) {
+                            Log.d("Play", "Capabilities reported — opening WebSocket");
+                            openJellyfinWebSocket();
+                        }
+                        @Override public void onError(String error) {
+                            Log.w("Play", "Failed to report capabilities: " + error);
+                            openJellyfinWebSocket(); // Try anyway
+                        }
+                    });
                 }
             }
             else
@@ -1151,6 +1294,9 @@ public class Play extends AppCompatActivity
                                 lastKnownDurationMs = video.get("duration").getAsLong();
                             }
 
+                            // Read pause state from Zidoo: status 0 = playing, 1 = paused
+                            boolean isZidooPaused = video.has("status") && video.get("status").getAsInt() == 1;
+
                             if (video.has("currentPosition")) {
                                 long currentPositionMs = video.get("currentPosition").getAsLong();
                                 lastKnownPositionMs = currentPositionMs;
@@ -1172,10 +1318,10 @@ public class Play extends AppCompatActivity
                                 }
 
                                 long positionTicks = JellyfinApi.msToTicks(currentPositionMs);
-                                // Report progress to Jellyfin
+                                // Report progress to Jellyfin (including pause state)
                                 if (!jellyfinItemId.isEmpty() && !serverUrl.isEmpty() && !accessToken.isEmpty()) {
                                     JellyfinApi.reportPlaybackProgress(serverUrl, accessToken,
-                                            jellyfinItemId, playSessionId, positionTicks, false,
+                                            jellyfinItemId, playSessionId, positionTicks, isZidooPaused,
                                             new JellyfinApi.SimpleCallback() {
                                                 @Override public void onSuccess(String msg) { }
                                                 @Override public void onError(String error) {
@@ -1399,6 +1545,7 @@ public class Play extends AppCompatActivity
             progressPoller.shutdownNow();
             progressPoller = null;
         }
+        closeJellyfinWebSocket();
     }
 
     /**
