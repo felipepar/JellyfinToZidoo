@@ -1175,7 +1175,7 @@ public class Play extends AppCompatActivity
         if (progressPoller == null || progressPoller.isShutdown()) return;
 
         progressPoller.schedule(() -> {
-            long nextDelay = 10000; // Default: 10 seconds
+            long nextDelay = 3000; // Default: 3 seconds
             try {
                 okhttp3.Request request = new okhttp3.Request.Builder()
                         .url("http://127.0.0.1:9529/ZidooVideoPlay/getPlayStatus")
